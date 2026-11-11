@@ -131,9 +131,11 @@ void DelayVisualizer::timerCallback()
 
 juce::Point<float> DelayVisualizer::pointOnWave(float travelPhase, juce::Rectangle<float> area, float amplitude) const
 {
-    const float wrapped = wrap01(travelPhase);
-    const float x = area.getX() + wrapped * area.getWidth();
-    const float theta = (wrapped * 1.35f + wavePhase) * (std::numbers::pi_v<float> * 2.0f);
+    // travelPhase is already in [0, 1]. Do not wrap 1 back to 0: that lands the
+    // final sample on the left edge and strokes a chord across the wave.
+    const float travel = juce::jlimit(0.0f, 1.0f, travelPhase);
+    const float x = area.getX() + travel * area.getWidth();
+    const float theta = (travel * 1.35f + wavePhase) * (std::numbers::pi_v<float> * 2.0f);
     const float shaped = std::sin(theta) * 0.84f + std::sin(theta * 2.0f + 0.65f) * 0.16f;
     return { x, area.getCentreY() + shaped * amplitude };
 }
@@ -165,29 +167,16 @@ void DelayVisualizer::paint(juce::Graphics& g)
     g.drawHorizontalLine(juce::roundToInt(waveArea.getCentreY()), waveArea.getX(), waveArea.getRight());
 
     juce::Path stroke;
-    juce::Path fill;
     const int steps = std::max(48, static_cast<int>(waveArea.getWidth()));
-    for (int step = 0; step <= steps; step += 2)
+    for (int step = 0; step <= steps; ++step)
     {
         const float travel = static_cast<float>(step) / static_cast<float>(steps);
         const auto point = pointOnWave(travel, waveArea, amplitude);
         if (step == 0)
-        {
             stroke.startNewSubPath(point);
-            fill.startNewSubPath(point.x, waveArea.getBottom());
-            fill.lineTo(point);
-        }
         else
-        {
             stroke.lineTo(point);
-            fill.lineTo(point);
-        }
     }
-    fill.lineTo(waveArea.getRight(), waveArea.getBottom());
-    fill.closeSubPath();
-
-    g.setColour(gold.withAlpha(0.08f));
-    g.fillPath(fill);
 
     g.setColour(gold.withAlpha(0.16f));
     g.strokePath(stroke, juce::PathStrokeType(7.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
