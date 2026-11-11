@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
 
+# Turn this off before project() enables C++. CMake 3.28 and newer, including
+# the MSVC toolset on windows-latest, otherwise scans C++20 sources for modules.
+# JUCE is not a C++ module project, and that scan fails the build.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
+
 project(FrancDelay
     VERSION 1.0.0
     DESCRIPTION "FrancDelay stereo delay audio plugin"
@@ -8,7 +13,12 @@ project(FrancDelay
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
+if(MSVC)
+    # Sources are UTF-8. Without this, MSVC decodes them with the system code page.
+    # Limited to C/C++ so the resource compiler does not see /utf-8.
+    add_compile_options("$<$<OR:$<COMPILE_LANGUAGE:C>,$<COMPILE_LANGUAGE:CXX>>:/utf-8>")
+endif()
 
 # Optional local JUCE checkout. When empty, JUCE 8 is fetched from GitHub.
 set(FRANCDELAY_JUCE_PATH "" CACHE PATH
@@ -46,7 +56,11 @@ juce_add_plugin(FrancDelay
     PLUGIN_CODE FrDl
     FORMATS VST3 Standalone
     PRODUCT_NAME "FrancDelay"
-    VST3_CATEGORIES Delay Fx)
+    VST3_CATEGORIES Delay Fx
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "FrancDelay needs access to the audio interface so it can process incoming sound."
+    HARDENED_RUNTIME_ENABLED TRUE
+    HARDENED_RUNTIME_OPTIONS com.apple.security.device.audio-input)
 
 target_sources(FrancDelay
     PRIVATE
