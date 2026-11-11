@@ -27,15 +27,15 @@ Web browser and curl support in JUCE are turned off, which avoids the Linux webk
 ```bash
 sudo apt update
 sudo apt install build-essential cmake pkg-config \
-  libasound2-dev libfreetype6-dev libx11-dev libxext-dev libxrandr-dev \
-  libxinerama-dev libxcursor-dev libxrender-dev libxcomposite-dev \
+  libasound2-dev libfreetype6-dev libfontconfig1-dev libx11-dev libxext-dev \
+  libxrandr-dev libxinerama-dev libxcursor-dev libxrender-dev libxcomposite-dev \
   libgl1-mesa-dev libglu1-mesa-dev
 
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
 
-`libfreetype6-dev` supplies the `libfreetype-dev` dependency JUCE links against.
+`libfreetype6-dev` supplies the `libfreetype-dev` dependency JUCE links against, and `libfontconfig1-dev` is required alongside it. If `c++` on your machine is not GCC and cannot link `libstdc++`, configure with `-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++`.
 
 ### macOS
 
