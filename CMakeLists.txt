@@ -1,5 +1,19 @@
 cmake_minimum_required(VERSION 3.22)
 
+# CMake 3.28+ scans C++20 sources for modules. JUCE is not a module project, and
+# that scan fails the MSVC build. Set this before project() so the compiler
+# check and every target, including the fetched JUCE build, inherit it.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
+
+# arm64 cannot deploy earlier than macOS 11. The CI universal build
+# (arm64 + x86_64) therefore uses 11.0. This must be set before project() so
+# the compiler test and the fetched JUCE build inherit it. Ignored on
+# non-Apple hosts. Override with -DCMAKE_OSX_DEPLOYMENT_TARGET=...
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING
+        "Minimum macOS version. Universal arm64 builds cannot go below 11.0.")
+endif()
+
 project(FrancDelay
     VERSION 1.0.0
     DESCRIPTION "FrancDelay stereo delay audio plugin"
@@ -8,7 +22,19 @@ project(FrancDelay
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
+if(MSVC)
+    # __cplusplus stays at 199711L unless /Zc:__cplusplus is set. /permissive-
+    # is the conforming mode the designated initializers in this project need.
+    # /utf-8 matches the source files on disk. /bigobj avoids C1128 in unity
+    # builds that overflow the COFF section limit (JUCE also requests it for
+    # its larger modules). Nothing here is Linux-specific.
+    add_compile_options(
+        /utf-8
+        /bigobj
+        $<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>
+        $<$<COMPILE_LANGUAGE:CXX>:/permissive->)
+endif()
 
 # Optional local JUCE checkout. When empty, JUCE 8 is fetched from GitHub.
 set(FRANCDELAY_JUCE_PATH "" CACHE PATH
@@ -79,3 +105,12 @@ target_link_libraries(FrancDelay
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+if(MSVC)
+    # juce_recommended_lto_flags compiles Release with /GL and forwards -LTCG
+    # through target_link_libraries. Also pass the linker's own /LTCG spelling
+    # so the flag survives the Visual Studio generator, and propagate it to the
+    # VST3 and Standalone wrappers. Debug builds stay incremental.
+    target_compile_options(FrancDelay PRIVATE $<$<CONFIG:Release>:/GL>)
+    target_link_options(FrancDelay PUBLIC $<$<CONFIG:Release>:/LTCG>)
+endif()

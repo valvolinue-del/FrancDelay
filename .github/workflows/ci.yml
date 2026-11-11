@@ -1,0 +1,320 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Enable long Git paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          git config --global core.autocrlf false
+
+      - name: Cache JUCE FetchContent
+        id: juce-cache
+        uses: actions/cache@v6
+        with:
+          # Source checkout plus the FetchContent subbuild. The key tracks
+          # CMakeLists.txt because that file pins the JUCE git tag (8.0.15).
+          path: .fetchcontent
+          key: juce-8.0.15-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsVersion = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
+          Write-Host "Visual Studio version: $vsVersion"
+          if ($vsVersion -like "18.*") {
+            $generator = "Visual Studio 18 2026"
+          } elseif ($vsVersion -like "17.*") {
+            $generator = "Visual Studio 17 2022"
+          } else {
+            throw "Unsupported Visual Studio version '$vsVersion'. Expected 17.x (2022) or 18.x (2026)."
+          }
+          $help = cmake --help
+          if ($help -notmatch [regex]::Escape($generator)) {
+            throw "CMake does not provide the generator '$generator'."
+          }
+          Write-Host "Using CMake generator: $generator"
+          $cmakeArgs = @(
+            "-S", ".",
+            "-B", "build",
+            "-G", $generator,
+            "-A", "x64",
+            "-DFETCHCONTENT_BASE_DIR=$($pwd.Path)\.fetchcontent"
+          )
+          if ("${{ steps.juce-cache.outputs.cache-hit }}" -eq "true") {
+            $cmakeArgs += "-DFETCHCONTENT_UPDATES_DISCONNECTED=ON"
+          }
+          cmake @cmakeArgs
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      # Optional Authenticode signing.
+      # When WINDOWS_CERTIFICATE_BASE64 (a base64 .pfx) is set, this is the
+      # place to run signtool against FrancDelay.exe and the VST3 binary.
+      # Signing itself is intentionally not implemented: the step only records
+      # that a certificate secret is present, and it stays skipped otherwise.
+      - name: Check for Authenticode certificate
+        id: authenticode
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+        run: |
+          if ([string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE_BASE64)) {
+            echo "enabled=false" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "enabled=true" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Authenticode sign (stub)
+        if: steps.authenticode.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          Write-Host "WINDOWS_CERTIFICATE_BASE64 is set."
+          Write-Host "Authenticode signing is not implemented."
+          Write-Host "Add a signtool invocation here for FrancDelay.exe and the VST3 binary."
+
+      - name: Package
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $version = $env:GITHUB_REF_NAME
+          } else {
+            $version = $env:GITHUB_SHA.Substring(0, 7)
+          }
+          $root = Join-Path $pwd "build\FrancDelay_artefacts\Release"
+          $vst3 = Join-Path $root "VST3\FrancDelay.vst3"
+          $exe = Join-Path $root "Standalone\FrancDelay.exe"
+          if (-not (Test-Path -LiteralPath $vst3 -PathType Container)) {
+            Get-ChildItem -Recurse build -Filter "FrancDelay*" | Select-Object -ExpandProperty FullName
+            throw "VST3 bundle not found at $vst3"
+          }
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            Get-ChildItem -Recurse build -Filter "FrancDelay*" | Select-Object -ExpandProperty FullName
+            throw "Standalone executable not found at $exe"
+          }
+          $stage = Join-Path $pwd "dist\stage"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item -LiteralPath $vst3 -Destination (Join-Path $stage "FrancDelay.vst3") -Recurse
+          Copy-Item -LiteralPath $exe -Destination (Join-Path $stage "FrancDelay.exe")
+          $zip = Join-Path $pwd "dist\FrancDelay-$version-windows-x64.zip"
+          if (Test-Path $zip) { Remove-Item $zip }
+          tar.exe -a -c -f $zip -C $stage FrancDelay.vst3 FrancDelay.exe
+          $listing = (tar.exe -tf $zip | Out-String)
+          Write-Host $listing
+          if ($listing -notmatch "FrancDelay\.exe") { throw "zip is missing FrancDelay.exe" }
+          if ($listing -notmatch "FrancDelay\.vst3/Contents/") { throw "zip is missing the VST3 bundle" }
+          @"
+          ### Windows x64
+          - ``FrancDelay-$version-windows-x64.zip``
+          - VST3 bundle and FrancDelay.exe
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: FrancDelay-windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      CMAKE_OSX_DEPLOYMENT_TARGET: "11.0"
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache JUCE FetchContent
+        id: juce-cache
+        uses: actions/cache@v6
+        with:
+          path: .fetchcontent
+          key: juce-8.0.15-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: |
+          set -euo pipefail
+          args=(
+            -S . -B build
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_OSX_ARCHITECTURES=arm64\;x86_64
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+            -DFETCHCONTENT_BASE_DIR="$PWD/.fetchcontent"
+          )
+          if [[ "${{ steps.juce-cache.outputs.cache-hit }}" == "true" ]]; then
+            args+=(-DFETCHCONTENT_UPDATES_DISCONNECTED=ON)
+          fi
+          cmake "${args[@]}"
+          echo "### macOS configure" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cmake -L build | grep -E 'OSX_ARCHITECTURES|OSX_DEPLOYMENT_TARGET' >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # Two architectures plus LTO are tight on the 7 GB macOS runner, so keep
+      # the link from overlapping a second heavy compile.
+      - name: Build
+        run: cmake --build build --config Release --parallel 2
+
+      - name: Check universal binaries
+        id: bundles
+        run: |
+          set -euo pipefail
+          app="build/FrancDelay_artefacts/Release/Standalone/FrancDelay.app"
+          vst3="build/FrancDelay_artefacts/Release/VST3/FrancDelay.vst3"
+          if [[ ! -d "$app" || ! -d "$vst3" ]]; then
+            find build -name 'FrancDelay*' -o -name '*.app' -o -name '*.vst3' | head -100
+            echo "expected bundles were not produced" >&2
+            exit 1
+          fi
+          for binary in "$app/Contents/MacOS/FrancDelay" "$vst3/Contents/MacOS/FrancDelay"; do
+            archs=$(lipo -archs "$binary")
+            echo "$binary: $archs"
+            [[ "$archs" == *arm64* && "$archs" == *x86_64* ]]
+            minos=$(otool -l "$binary" | awk '/minos/{print $2; exit}')
+            echo "minos $binary: ${minos:-<missing>}"
+            if [[ "$minos" != 11.0* ]]; then
+              echo "expected deployment target 11.0, got '${minos:-<missing>}'" >&2
+              exit 1
+            fi
+          done
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "vst3=$vst3" >> "$GITHUB_OUTPUT"
+
+      - name: Determine signing mode
+        id: signing
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mode=developer-id
+          for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD MACOS_SIGNING_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "Signing secret $name is not set."
+              mode=adhoc
+            fi
+          done
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "macOS signing mode: $mode" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ad-hoc sign
+        if: steps.signing.outputs.mode == 'adhoc'
+        run: bash .github/scripts/macos-sign.sh adhoc "${{ steps.bundles.outputs.app }}" "${{ steps.bundles.outputs.vst3 }}"
+
+      - name: Developer ID sign and notarize
+        if: steps.signing.outputs.mode == 'developer-id'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: bash .github/scripts/macos-sign.sh developer-id "${{ steps.bundles.outputs.app }}" "${{ steps.bundles.outputs.vst3 }}"
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="$GITHUB_REF_NAME"
+          else
+            version="${GITHUB_SHA:0:7}"
+          fi
+          mkdir -p dist
+          zip="dist/FrancDelay-${version}-macos-universal.zip"
+          # ditto keeps each bundle's own name (FrancDelay.app, FrancDelay.vst3).
+          ditto -c -k --keepParent \
+            "${{ steps.bundles.outputs.app }}" \
+            "${{ steps.bundles.outputs.vst3 }}" \
+            "$zip"
+          unzip -l "$zip"
+          unzip -l "$zip" | grep -q "FrancDelay.app/Contents/Info.plist"
+          unzip -l "$zip" | grep -q "FrancDelay.vst3/Contents/Info.plist"
+          {
+            echo "### macOS universal"
+            echo "- \`$zip\`"
+            echo "- arm64 + x86_64, deployment target 11.0"
+            echo "- signing: ${{ steps.signing.outputs.mode }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: FrancDelay-macos-universal
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: [windows, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: FrancDelay-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/*.zip)
+          if [[ ${#files[@]} -lt 2 ]]; then
+            echo "expected Windows and macOS zips, found: ${files[*]:-none}" >&2
+            ls -R dist >&2 || true
+            exit 1
+          fi
+          notes=$(cat <<EOF
+          FrancDelay ${GITHUB_REF_NAME}
+
+          - Windows x64: VST3 bundle and standalone (\`FrancDelay.exe\`)
+          - macOS universal (arm64 + x86_64, macOS 11.0): VST3 bundle and standalone (\`FrancDelay.app\`)
+
+          macOS builds are Developer ID signed and notarized when the signing secrets are configured. Otherwise they are ad-hoc signed. Gatekeeper may require a right-click Open, or \`xattr -dr com.apple.quarantine\` on the app and the \`.vst3\`.
+          EOF
+          )
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "$notes"
+          fi

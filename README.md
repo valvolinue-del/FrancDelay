@@ -46,6 +46,13 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
 
+On a Mac the deployment target defaults to 11.0, which is the oldest version that can include an Apple Silicon slice. A universal build (the same one CI produces):
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+cmake --build build --config Release
+```
+
 The Standalone app can be launched directly. Copy `FrancDelay.vst3` to `~/Library/Audio/Plug-Ins/VST3` when you want it in a host.
 
 ### Windows
@@ -56,6 +63,8 @@ From a Visual Studio 2022 x64 developer prompt, with the Desktop development wit
 cmake -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 ```
+
+CMake passes the MSVC flags this project needs: `/permissive-`, `/Zc:__cplusplus`, `/utf-8`, `/bigobj`, and Release `/LTCG`. Visual Studio 2026 (`-G "Visual Studio 18 2026" -A x64`) uses the same flags. Web browser and curl stay off, so this path does not need extra Windows packages.
 
 Copy the `FrancDelay.vst3` bundle to `C:\Program Files\Common Files\VST3`. The Standalone target is `FrancDelay.exe`.
 
@@ -82,6 +91,52 @@ That path is added with `add_subdirectory`. Leave the option unset to fetch the 
 ./build/FrancDelay_artefacts/Release/Standalone/FrancDelay
 ```
 
+## CI & Releases
+
+GitHub Actions (`.github/workflows/ci.yml`) builds Release artefacts on every push to `main` and on pull requests:
+
+- **Windows** (`windows-latest`, MSVC, x64): VST3 and Standalone
+- **macOS** (`macos-latest`, universal arm64 + x86_64, deployment target 11.0): VST3 and Standalone
+
+Download the zips from the workflow run's **Artifacts** list on the Actions tab. A tag that matches `v*` also publishes those zips as a [GitHub Release](https://github.com/valvolinue-del/FrancDelay/releases).
+
+The Windows zip contains `FrancDelay.vst3` (the whole bundle folder) and `FrancDelay.exe`. The macOS zip contains `FrancDelay.vst3` and `FrancDelay.app`, packed with `ditto -c -k --keepParent` so the bundles stay intact. The JUCE FetchContent checkout is cached between runs.
+
+### Code signing secrets
+
+macOS Developer ID signing and notarization run only when all of these repository secrets are set (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12` | Developer ID Application certificate exported as `.p12`, then base64-encoded (`base64 -i Certificate.p12`) |
+| `MACOS_CERTIFICATE_PASSWORD` | Password for that `.p12` |
+| `MACOS_SIGNING_IDENTITY` | Signing identity, for example `Developer ID Application: Your Name (TEAMID)` |
+| `APPLE_ID` | Apple ID used by `notarytool` |
+| `APPLE_TEAM_ID` | Apple Developer Team ID |
+| `APPLE_APP_PASSWORD` | App-specific password for the Apple ID |
+
+When those secrets are present, the macOS job imports the certificate into a temporary keychain, signs with the hardened runtime and a secure timestamp, submits the bundles with `xcrun notarytool submit --wait`, then staples the ticket onto `FrancDelay.app` and `FrancDelay.vst3` with `xcrun stapler staple`. If any secret is missing, the job still succeeds and uploads ad-hoc-signed builds.
+
+Windows Authenticode signing is a gated stub in the workflow. It does not sign anything. The stub runs only when `WINDOWS_CERTIFICATE_BASE64` is set, and that is where a `signtool` step would go.
+
+### Cut a release
+
+```bash
+git tag v0.1.0
+git push --tags
+```
+
+The tag build publishes `FrancDelay-v0.1.0-windows-x64.zip` and `FrancDelay-v0.1.0-macos-universal.zip` on the release for that tag.
+
+### Unsigned macOS builds
+
+Builds produced without the signing secrets are ad-hoc signed. Gatekeeper may block them the first time. Right-click the app or plug-in and choose Open, or clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine /path/to/FrancDelay.app
+xattr -dr com.apple.quarantine /path/to/FrancDelay.vst3
+```
+
 ## Adding a GitHub remote later
 
 From this repository:
@@ -100,6 +155,9 @@ git remote add github git@github.com:USER/FrancDelay.git && git push -u github H
 
 ```
 CMakeLists.txt
+.github/workflows/ci.yml
+.github/scripts/macos-sign.sh
+.github/macos/entitlements.plist
 Source/PluginProcessor.h
 Source/PluginProcessor.cpp
 Source/PluginEditor.h
