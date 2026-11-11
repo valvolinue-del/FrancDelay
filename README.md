@@ -100,7 +100,7 @@ GitHub Actions (`.github/workflows/ci.yml`) builds Release artefacts on every pu
 
 Download the zips from the workflow run's **Artifacts** list on the Actions tab. A tag that matches `v*` also publishes those zips as a [GitHub Release](https://github.com/valvolinue-del/FrancDelay/releases).
 
-The Windows zip contains `FrancDelay.vst3` (the whole bundle folder) and `FrancDelay.exe`. The macOS zip contains `FrancDelay.vst3` and `FrancDelay.app`, packed with `ditto -c -k --keepParent` so the bundles stay intact. The JUCE FetchContent checkout is cached between runs.
+The Windows zip contains `FrancDelay.vst3` (the whole bundle folder) and `FrancDelay.exe`. The macOS zip contains `FrancDelay.vst3` and `FrancDelay.app` at the archive root. They are packed with `ditto -c -k` so the bundles stay intact (`ditto -c` accepts one source, so both bundles are staged in a directory and that directory is archived). The JUCE FetchContent checkout is cached between runs.
 
 ### Code signing secrets
 

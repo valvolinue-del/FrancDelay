@@ -43,6 +43,7 @@ jobs:
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vsVersion = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationVersion
           Write-Host "Visual Studio version: $vsVersion"
+          cmake --version
           if ($vsVersion -like "18.*") {
             $generator = "Visual Studio 18 2026"
           } elseif ($vsVersion -like "17.*") {
@@ -50,9 +51,12 @@ jobs:
           } else {
             throw "Unsupported Visual Studio version '$vsVersion'. Expected 17.x (2022) or 18.x (2026)."
           }
-          $help = cmake --help
+          # cmake --help is an array of lines. -notmatch on an array returns the
+          # non-matching lines, which is truthy even when the generator is listed.
+          $help = cmake --help | Out-String
           if ($help -notmatch [regex]::Escape($generator)) {
-            throw "CMake does not provide the generator '$generator'."
+            Write-Host $help
+            throw "CMake does not provide the generator '$generator'. Install CMake 4.2 or newer for Visual Studio 18 2026."
           }
           Write-Host "Using CMake generator: $generator"
           $cmakeArgs = @(
@@ -252,11 +256,17 @@ jobs:
           fi
           mkdir -p dist
           zip="dist/FrancDelay-${version}-macos-universal.zip"
-          # ditto keeps each bundle's own name (FrancDelay.app, FrancDelay.vst3).
-          ditto -c -k --keepParent \
-            "${{ steps.bundles.outputs.app }}" \
-            "${{ steps.bundles.outputs.vst3 }}" \
-            "$zip"
+          # ditto -c cannot archive multiple sources ("Can't archive multiple
+          # sources"). Stage both bundles, then archive that directory.
+          # ditto -c -k stores the directory's children at the zip root, so
+          # FrancDelay.app and FrancDelay.vst3 stay intact bundles. --keepParent
+          # is the single-bundle form of the same flag and would add an extra
+          # wrapper directory here.
+          stage=$(mktemp -d)
+          ditto "${{ steps.bundles.outputs.app }}" "$stage/FrancDelay.app"
+          ditto "${{ steps.bundles.outputs.vst3 }}" "$stage/FrancDelay.vst3"
+          ditto -c -k "$stage" "$zip"
+          rm -rf "$stage"
           unzip -l "$zip"
           unzip -l "$zip" | grep -q "FrancDelay.app/Contents/Info.plist"
           unzip -l "$zip" | grep -q "FrancDelay.vst3/Contents/Info.plist"

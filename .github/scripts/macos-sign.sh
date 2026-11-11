@@ -99,7 +99,13 @@ for bundle in "$@"; do
 done
 
 notarize_zip="$notarize_dir/notarize.zip"
-ditto -c -k --keepParent "$@" "$notarize_zip"
+# ditto -c archives one source. Stage the bundles so both are in the upload.
+notarize_stage="$notarize_dir/bundles"
+mkdir -p "$notarize_stage"
+for bundle in "$@"; do
+    ditto "$bundle" "$notarize_stage/$(basename "$bundle")"
+done
+ditto -c -k "$notarize_stage" "$notarize_zip"
 echo "Submitting $(basename "$notarize_zip") to notarytool"
 xcrun notarytool submit "$notarize_zip" \
     --apple-id "$APPLE_ID" \
