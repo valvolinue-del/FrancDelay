@@ -1,0 +1,63 @@
+# Build trees
+Build/
+build/
+build*/
+cmake-build-*/
+out/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+Testing/
+_deps/
+CMakeUserPresets.json
+compile_commands.json
+
+# JUCE
+JuceLibraryCode/
+
+# IDE and editor
+.vscode/
+.idea/
+.vs/
+*.user
+*.suo
+*.ncb
+*.opendb
+*.VC.db
+*.VC.opendb
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+DerivedData/
+*.swp
+*~
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Compiled objects and local plugin binaries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.ilk
+*.pdb
+*.exp
+*.vst3
+*.component
+*.aaxplugin
+*.dSYM/
