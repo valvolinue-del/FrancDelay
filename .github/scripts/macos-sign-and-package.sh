@@ -260,11 +260,25 @@ fi
 # notarytool uses the Apple ID password, not the signing keychain.
 cleanup
 
+# ditto -c -k --keepParent preserves one bundle, and ditto refuses to archive
+# more than one source. Copy both bundles with ditto, then archive that
+# directory with ditto -c -k so the zip root is FrancDelay.vst3/ and
+# FrancDelay.app/ (the same layout --keepParent gives a single bundle).
+archive_bundles() {
+  local dest=$1
+  local stage
+  stage=$(mktemp -d "${RUNNER_TEMP:-/tmp}/francdelay-ditto.XXXXXX")
+  ditto "$VST3" "$stage/FrancDelay.vst3"
+  ditto "$APP" "$stage/FrancDelay.app"
+  rm -f "$dest"
+  ditto -c -k "$stage" "$dest"
+  rm -rf "$stage"
+}
+
 if [[ "$notary_present" -eq 3 ]]; then
   NOTARY_ZIP="${RUNNER_TEMP:-/tmp}/FrancDelay-notarize.zip"
-  rm -f "$NOTARY_ZIP"
   echo "Submitting bundles to notarytool."
-  ditto -c -k --keepParent "$VST3" "$APP" "$NOTARY_ZIP"
+  archive_bundles "$NOTARY_ZIP"
 
   set +e
   NOTARY_OUTPUT=$(xcrun notarytool submit "$NOTARY_ZIP" \
@@ -310,8 +324,7 @@ else
 fi
 
 mkdir -p "$(dirname "$OUTPUT_ZIP")"
-rm -f "$OUTPUT_ZIP"
-ditto -c -k --keepParent "$VST3" "$APP" "$OUTPUT_ZIP"
+archive_bundles "$OUTPUT_ZIP"
 
 listing=$(unzip -l "$OUTPUT_ZIP")
 printf '%s\n' "$listing"

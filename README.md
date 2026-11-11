@@ -95,7 +95,7 @@ GitHub Actions builds Release artifacts on every push to `main` and on every pul
 | `FrancDelay-windows-x64.zip` | `windows-latest`, MSVC, x64 | `FrancDelay.vst3` (the whole bundle) and `FrancDelay.exe` |
 | `FrancDelay-macos-universal.zip` | `macos-latest` | `FrancDelay.vst3` and `FrancDelay.app`, universal arm64 + x86_64, macOS deployment target 11.0 |
 
-The macOS zip is made with `ditto -c -k --keepParent`, so the bundles stay sealed. Unzip it with Finder or `ditto -x -k FrancDelay-macos-universal.zip .`.
+The macOS zip is made with `ditto`. Each bundle is copied with `ditto`, then `ditto -c -k` archives that directory, so the zip root is `FrancDelay.vst3/` and `FrancDelay.app/`. `ditto -c` cannot take both bundles as sources in one command, and archiving a bundle without its parent directory would flatten `Contents/` to the zip root. Unzip it with Finder or `ditto -x -k FrancDelay-macos-universal.zip .`.
 
 ### Where to download
 
