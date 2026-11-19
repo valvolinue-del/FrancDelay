@@ -50,12 +50,16 @@ The Standalone app can be launched directly. Copy `FrancDelay.vst3` to `~/Librar
 
 ### Windows
 
-From a Visual Studio 2022 x64 developer prompt, with the Desktop development with C++ workload installed:
+Install Visual Studio 2022 or Visual Studio 2026 with the Desktop development with C++ workload, plus CMake. Visual Studio 2026 needs CMake 4.2 or newer, which is the first release that knows the `Visual Studio 18 2026` generator. Nothing in the build uses pkg-config or other Linux-only tools.
+
+From an x64 developer prompt:
 
 ```bat
-cmake -B build -G "Visual Studio 17 2022" -A x64
+cmake -B build -A x64
 cmake --build build --config Release
 ```
+
+`-A x64` builds the 64-bit configuration of whichever Visual Studio CMake discovers. To pin one, pass `-G "Visual Studio 17 2022"` or `-G "Visual Studio 18 2026"`.
 
 Copy the `FrancDelay.vst3` bundle to `C:\Program Files\Common Files\VST3`. The Standalone target is `FrancDelay.exe`.
 
@@ -82,6 +86,66 @@ That path is added with `add_subdirectory`. Leave the option unset to fetch the 
 ./build/FrancDelay_artefacts/Release/Standalone/FrancDelay
 ```
 
+## CI & Releases
+
+GitHub Actions builds Release artifacts on every push to `main` and on every pull request. A tag named `v*` (for example `v0.1.0`) runs the same builds and publishes a GitHub Release that contains both zips.
+
+| Zip | Runner | Contents |
+| --- | --- | --- |
+| `FrancDelay-windows-x64.zip` | `windows-latest`, MSVC, x64 | `FrancDelay.vst3` (the whole bundle) and `FrancDelay.exe` |
+| `FrancDelay-macos-universal.zip` | `macos-latest` | `FrancDelay.vst3` and `FrancDelay.app`, universal arm64 + x86_64, macOS deployment target 11.0 |
+
+The macOS zip is made with `ditto`. Each bundle is copied with `ditto`, then `ditto -c -k` archives that directory, so the zip root is `FrancDelay.vst3/` and `FrancDelay.app/`. `ditto -c` cannot take both bundles as sources in one command, and archiving a bundle without its parent directory would flatten `Contents/` to the zip root. Unzip it with Finder or `ditto -x -k FrancDelay-macos-universal.zip .`.
+
+### Where to download
+
+- **Pull requests and pushes to `main`:** open the [Actions](https://github.com/valvolinue-del/FrancDelay/actions) tab, select the CI run, and download the artifacts at the bottom of the run summary. They are kept with the run, not attached to a release.
+- **Tags `v*`:** open the [Releases](https://github.com/valvolinue-del/FrancDelay/releases) page. The release for that tag has both zips.
+
+Windows artifacts are not Authenticode signed. The workflow has a gated stub for that; see the comment in `.github/workflows/ci.yml`. macOS artifacts are ad-hoc signed when the Apple secrets below are absent, so the job still passes. Gatekeeper will refuse an ad-hoc build until you open it from the Finder context menu. When all six secrets are set, the bundles are Developer ID signed, notarized, and stapled.
+
+### Apple signing secrets
+
+The macOS job reads these repository Actions secrets. It does not read environment secrets unless you change the workflow.
+
+| Secret | What it is |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12` | Base64 of a Developer ID Application `.p12`, including its private key |
+| `MACOS_CERTIFICATE_PASSWORD` | Password you set when exporting that `.p12` |
+| `MACOS_SIGNING_IDENTITY` | Certificate name, for example `Developer ID Application: Your Name (TEAMID)` |
+| `APPLE_ID` | Apple ID email of the developer account |
+| `APPLE_TEAM_ID` | 10-character Team ID |
+| `APPLE_APP_PASSWORD` | App-specific password used by `notarytool` |
+
+Signing runs only when the three `MACOS_*` secrets are all set. Notarization runs only when those three and the three `APPLE_*` secrets are all set. A partial set fails the job so a typo is not shipped as an ad-hoc build.
+
+1. Enroll the Apple Developer Program (a paid membership). Developer ID certificates can be created by the Account Holder or an Admin.
+2. On a Mac, open Keychain Access. Choose Keychain Access → Certificate Assistant → Request a Certificate From a Certificate Authority. Enter the Apple ID email, select Saved to disk, and save the `.certSigningRequest` file.
+3. Open [Certificates](https://developer.apple.com/account/resources/certificates/list) and click the add button. Choose **Developer ID Application** (Software). This is the certificate for software distributed outside the Mac App Store. Do not choose Apple Development or Mac App Distribution. Upload the certificate signing request and download the `.cer`.
+4. Double-click the `.cer` to install it in the login keychain. In Keychain Access, select the login keychain and My Certificates. Expand **Developer ID Application: Your Name (TEAMID)** and confirm a private key is listed under it. If the private key is missing, the signing request was created on another Mac and this certificate cannot sign.
+5. Select the certificate and the private key together. Choose File → Export Items, pick Personal Information Exchange (`.p12`), and set an export password. That password is `MACOS_CERTIFICATE_PASSWORD`. The certificate's common name, including the team id in parentheses, is `MACOS_SIGNING_IDENTITY`.
+6. Base64-encode the `.p12` as a single line. On a Mac:
+
+   ```bash
+   base64 -i DeveloperIDApplication.p12 | tr -d '\n' | pbcopy
+   ```
+
+   The clipboard is `MACOS_CERTIFICATE_P12`. Do not commit the `.p12` or the base64 text.
+7. Create the notarization password at [account.apple.com](https://account.apple.com) under Sign-In and Security → App-Specific Passwords. Name it `FrancDelay notarization`. Apple shows the password once. That value is `APPLE_APP_PASSWORD`. `APPLE_ID` is the Apple ID email. `APPLE_TEAM_ID` is the Team ID on [Membership details](https://developer.apple.com/account) (the same 10 characters as in the certificate name).
+8. In this GitHub repository, open Settings → Secrets and variables → Actions → New repository secret. Add each of the six names above as its own secret. Paste the base64 string for `MACOS_CERTIFICATE_P12` with no extra quotes.
+
+The first Developer ID certificate Apple issues for an account can take some time to appear. `notarytool` accepts the app-specific password only for the Apple ID that created it.
+
+### Cut a release
+
+On the commit you want to ship:
+
+```bash
+git tag v0.1.0 && git push --tags
+```
+
+The tag push builds both platforms and, if both succeed, creates the GitHub Release. Pushing the tag again does not move it; delete the remote tag first if you need to reuse the name.
+
 ## Adding a GitHub remote later
 
 From this repository:
@@ -100,6 +164,9 @@ git remote add github git@github.com:USER/FrancDelay.git && git push -u github H
 
 ```
 CMakeLists.txt
+.github/workflows/ci.yml
+.github/scripts/macos-sign-and-package.sh
+.github/macos/entitlements.plist
 Source/PluginProcessor.h
 Source/PluginProcessor.cpp
 Source/PluginEditor.h
