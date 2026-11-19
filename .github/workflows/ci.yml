@@ -228,6 +228,19 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Add the AU component to the macOS artifact
+        run: |
+          set -euo pipefail
+          comp="build/FrancDelay_artefacts/Release/AU/FrancDelay.component"
+          zip_path="dist/FrancDelay-macos-universal.zip"
+          test -d "$comp"
+          stage=$(mktemp -d "${RUNNER_TEMP:-/tmp}/francdelay-au.XXXXXX")
+          ditto -x -k "$zip_path" "$stage"
+          ditto "$comp" "$stage/FrancDelay.component"
+          rm -f "$zip_path"
+          ditto -c -k --norsrc "$stage" "$zip_path"
+          unzip -l "$zip_path" | grep -E "FrancDelay\.(vst3|app|component)/Contents/Info.plist"
+
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:

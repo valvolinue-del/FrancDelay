@@ -43,6 +43,11 @@ else()
     FetchContent_MakeAvailable(JUCE)
 endif()
 
+set(FRANCDELAY_FORMATS VST3 Standalone)
+if(APPLE)
+    list(APPEND FRANCDELAY_FORMATS AU)
+endif()
+
 juce_add_plugin(FrancDelay
     COMPANY_NAME "Franc Audio"
     BUNDLE_ID com.francaudio.francdelay
@@ -54,7 +59,7 @@ juce_add_plugin(FrancDelay
     COPY_PLUGIN_AFTER_BUILD FALSE
     PLUGIN_MANUFACTURER_CODE Frnc
     PLUGIN_CODE FrDl
-    FORMATS VST3 Standalone
+    FORMATS ${FRANCDELAY_FORMATS}
     PRODUCT_NAME "FrancDelay"
     VST3_CATEGORIES Delay Fx
     MICROPHONE_PERMISSION_ENABLED TRUE
