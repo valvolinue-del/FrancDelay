@@ -49,7 +49,7 @@ if(APPLE)
 endif()
 
 juce_add_plugin(FrancDelay
-    COMPANY_NAME "Franc Audio"
+    COMPANY_NAME "Franc"
     BUNDLE_ID com.francaudio.francdelay
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT FALSE
